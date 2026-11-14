@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Madrassa — Gestion des emplois du temps</title>
+<style>
+:root{--primary:#176b55;--primary-dark:#10513f;--bg:#f3f6f5;--card:#fff;--text:#1f2937;--muted:#64748b;--danger:#c0392b;--border:#e2e8f0}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--primary-dark);color:white;padding:22px 16px}header .wrap{max-width:1100px;margin:auto}
+header h1{margin:0 0 6px;font-size:1.5rem}header p{margin:0;color:#d8eee7}
+nav{background:white;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+nav .wrap{max-width:1100px;margin:auto;display:flex;gap:8px;padding:10px 16px;flex-wrap:wrap}
+button,.tab{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
+.tab{background:#eef4f1;color:var(--primary-dark)}.tab.active,.primary{background:var(--primary);color:white}
+button:hover{filter:brightness(.96)}button:disabled{opacity:.5;cursor:not-allowed}
+main{max-width:1100px;margin:22px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 8px #0f172a08}
+h2{margin:0 0 14px;font-size:1.2rem}h3{margin:18px 0 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+label{display:block;font-size:.9rem;font-weight:700;margin:8px 0 5px}
+input,select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;background:white;font:inherit}
+form button{margin-top:14px}.secondary{background:#e8efec;color:#174d3f}.danger{background:var(--danger);color:white}.small{padding:7px 10px;font-size:.85rem}
+.muted{color:var(--muted)}.hidden{display:none!important}.notice{padding:12px;border-radius:8px;background:#edf7f2;color:#15543e;margin:12px 0}
+.error{background:#fff0ef;color:#8b2119}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.item{padding:12px 0;border-bottom:1px solid var(--border)}.item:last-child{border-bottom:0}
+.actions{display:flex;gap:7px;flex-wrap:wrap}.course{border-left:4px solid var(--primary);padding:12px;margin:10px 0;background:#f8fbf9;border-radius:7px}
+.badge{display:inline-block;background:#e3f2eb;color:#15543e;padding:4px 8px;border-radius:20px;font-size:.8rem;font-weight:700}
+.day-title{margin-top:20px;color:var(--primary-dark);border-bottom:1px solid var(--border);padding-bottom:7px}
+footer{text-align:center;color:var(--muted);padding:25px}
+#status{font-size:.9rem}
+@media(max-width:600px){header h1{font-size:1.25rem}.card{padding:14px}nav .wrap{gap:6px}.tab{flex:1}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<h1>📚 Madrassa — Emploi du temps</h1>
+<p>Consultez les cours ou gérez l'organisation de la Madrassa.</p>
+</div></header>
+<nav><div class="wrap">
+<button class="tab active" id="tab-public" type="button">Emploi du temps</button>
+<button class="tab" id="tab-admin" type="button">Administration</button>
+<span id="status" class="muted" style="align-self:center;margin-left:auto">Connexion à Firebase…</span>
+</div></nav>
+<main>
+<section id="public-view">
+<div class="card">
+<div class="row"><h2>Consulter les cours</h2><span class="badge">Accès public</span></div>
+<div class="grid">
+<div><label for="filter-class">Classe</label><select id="filter-class"><option value="">Toutes les classes</option></select></div>
+<div><label for="filter-day">Jour</label><select id="filter-day"><option value="">Tous les jours</option>
+<option>Lundi</option><option>Mardi</option><option>Mercredi</option><option>Jeudi</option><option>Vendredi</option><option>Samedi</option><option>Dimanche</option></select></div>
+<div><label for="filter-teacher">Professeur</label><input id="filter-teacher" placeholder="Rechercher un professeur"></div>
+</div></div>
+<div class="card"><div id="public-schedule" class="muted">Chargement de l'emploi du temps…</div></div>
+</section>
+
+<section id="admin-view" class="hidden">
+<div id="login-card" class="card">
+<h2>Connexion administrateur</h2>
+<p class="muted">Connectez-vous avec un compte créé dans Firebase Authentication.</p>
+<form id="login-form">
+<label for="email">Adresse e-mail</label><input id="email" type="email" autocomplete="username" required>
+<label for="password">Mot de passe</label><input id="password" type="password" autocomplete="current-password" required>
+<button class="primary" type="submit">Se connecter</button>
+</form><div id="login-message" aria-live="polite"></div>
+</div>
+
+<div id="admin-panel" class="hidden">
+<div class="card"><div class="row"><div><h2>Administration</h2><p class="muted">Vous êtes connecté.</p></div><button id="logout" class="secondary" type="button">Se déconnecter</button></div></div>
+
+<div class="card">
+<h2>1. Gestion des classes</h2>
+<form id="class-form">
+<input type="hidden" id="class-id">
+<label for="class-name">Nom de la classe</label><input id="class-name" placeholder="Ex. Niveau 1, Adultes" required maxlength="70">
+<div class="actions"><button class="primary" type="submit" id="class-submit">Ajouter la classe</button><button class="secondary hidden" id="cancel-class-edit" type="button">Annuler</button></div>
+</form>
+<h3>Classes existantes</h3><div id="class-list" class="muted">Chargement…</div>
+</div>
+
+<div class="card">
+<h2>2. Gestion des cours</h2>
+<form id="course-form">
+<input type="hidden" id="course-id">
+<div class="grid">
+<div><label for="course-class">Classe</label><select id="course-class" required><option value="">Choisir une classe</option></select></div>
+<div><label for="course-day">Jour</label><select id="course-day" required><option value="">Choisir un jour</option>
+<option>Lundi</option><option>Mardi</option><option>Mercredi</option><option>Jeudi</option><option>Vendredi</option><option>Samedi</option><option>Dimanche</option></select></div>
+<div><label for="start-time">Heure de début</label><input id="start-time" type="time" required></div>
+<div><label for="end-time">Heure de fin</label><input id="end-time" type="time" required></div>
+<div><label for="subject">Matière</label><input id="subject" placeholder="Ex. Coran, arabe" required maxlength="100"></div>
+<div><label for="teacher">Professeur</label><input id="teacher" placeholder="Nom du professeur" required maxlength="100"></div>
+</div>
+<div class="actions"><button class="primary" type="submit" id="course-submit">Ajouter le cours</button><button class="secondary hidden" id="cancel-course-edit" type="button">Annuler</button></div>
+<div id="course-message" aria-live="polite"></div>
+</form>
+</div>
+
+<div class="card"><h2>3. Cours enregistrés</h2><p class="muted">Vous pouvez modifier ou supprimer chaque cours.</p><div id="admin-course-list" class="muted">Chargement…</div></div>
+</div>
+</section>
+</main>
+<footer>Plateforme de gestion de la Madrassa</footer>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBiiF6i7vweIIyyjKH0p-CP20iHaDKspkY",
+  authDomain: "madrassa-web.firebaseapp.com",
+  projectId: "madrassa-web",
+  storageBucket: "madrassa-web.firebasestorage.app",
+  messagingSenderId: "214049102730",
+  appId: "1:214049102730:web:78f2180bec288b08db4673",
+  measurementId: "G-8QQ3P72GRE"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const $ = id => document.getElementById(id);
+const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+let classes = [];
+let courses = [];
+let currentUser = null;
+
+function safeText(value="") {
+  return String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function message(target, text, isError=false) {
+  target.innerHTML = `<div class="notice ${isError?"error":""}">${safeText(text)}</div>`;
+}
+function showTab(which) {
+  $("public-view").classList.toggle("hidden", which !== "public");
+  $("admin-view").classList.toggle("hidden", which !== "admin");
+  $("tab-public").classList.toggle("active", which === "public");
+  $("tab-admin").classList.toggle("active", which === "admin");
+}
+$("tab-public").addEventListener("click",()=>showTab("public"));
+$("tab-admin").addEventListener("click",()=>showTab("admin"));
+
+$("login-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("login-message").innerHTML = "";
+  try {
+    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
+  } catch(err) {
+    message($("login-message"), "Connexion impossible. Vérifiez votre adresse e-mail et votre mot de passe.", true);
+    console.error(err);
+  }
+});
+$("logout").addEventListener("click",()=>signOut(auth));
+
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  $("login-card").classList.toggle("hidden", !!user);
+  $("admin-panel").classList.toggle("hidden", !user);
+  $("status").textContent = user ? `Connecté : ${user.email}` : "Mode consultation";
+});
+
+function refreshClassSelects() {
+  const options = classes.map(c=>`<option value="${safeText(c.id)}">${safeText(c.nom)}</option>`).join("");
+  $("course-class").innerHTML = '<option value="">Choisir une classe</option>'+options;
+  const selected = $("filter-class").value;
+  $("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
+  $("filter-class").value = classes.some(c=>c.id===selected) ? selected : "";
+}
+onSnapshot(collection(db,"classes"), snap => {
+  classes = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
+  refreshClassSelects();
+  renderClasses();
+  renderPublicSchedule();
+}, err => {
+  $("class-list").textContent = "Impossible de charger les classes. Vérifiez les règles Firestore.";
+  console.error(err);
+});
+onSnapshot(collection(db,"cours"), snap => {
+  courses = snap.docs.map(d=>({id:d.id,...d.data()}));
+  renderAdminCourses();
+  renderPublicSchedule();
+}, err => {
+  $("public-schedule").textContent = "Impossible de charger les cours. Vérifiez les règles Firestore.";
+  console.error(err);
+});
+
+function renderClasses() {
+  if(!classes.length){$("class-list").innerHTML='<p class="muted">Aucune classe pour le moment.</p>';return;}
+  $("class-list").innerHTML = classes.map(c=>`<div class="item row"><strong>${safeText(c.nom)}</strong><div class="actions"><button class="secondary small" data-edit-class="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-class="${safeText(c.id)}">Supprimer</button></div></div>`).join("");
+}
+$("class-list").addEventListener("click", async e=>{
+  const edit=e.target.closest("[data-edit-class]")?.dataset.editClass;
+  const del=e.target.closest("[data-delete-class]")?.dataset.deleteClass;
+  if(edit){
+    const c=classes.find(x=>x.id===edit); if(!c)return;
+    $("class-id").value=c.id; $("class-name").value=c.nom||"";
+    $("class-submit").textContent="Enregistrer les modifications"; $("cancel-class-edit").classList.remove("hidden");
+    $("class-name").focus();
+  }
+  if(del){
+    const c=classes.find(x=>x.id===del); if(!c)return;
+    if(!confirm(`Supprimer « ${c.nom} » et tous les cours associés ?`))return;
+    try{
+      const related=await getDocs(query(collection(db,"cours"),where("classeId","==",del)));
+      await Promise.all(related.docs.map(d=>deleteDoc(doc(db,"cours",d.id))));
+      await deleteDoc(doc(db,"classes",del));
+    }catch(err){alert("Suppression impossible. Vérifiez vos droits administrateur.");console.error(err);}
+  }
+});
+$("class-form").addEventListener("submit",async e=>{
+  e.preventDefault(); if(!currentUser)return;
+  const id=$("class-id").value, nom=$("class-name").value.trim();
+  if(!nom)return;
+  try{
+    if(id) await updateDoc(doc(db,"classes",id),{nom});
+    else await addDoc(collection(db,"classes"),{nom,createdAt:new Date().toISOString()});
+    resetClassForm();
+  }catch(err){alert("Impossible d'enregistrer la classe. Vérifiez les règles Firestore.");console.error(err);}
+});
+function resetClassForm(){
+  $("class-form").reset();$("class-id").value="";$("class-submit").textContent="Ajouter la classe";$("cancel-class-edit").classList.add("hidden");
+}
+$("cancel-class-edit").addEventListener("click",resetClassForm);
+
+$("course-form").addEventListener("submit",async e=>{
+  e.preventDefault(); if(!currentUser)return;
+  const id=$("course-id").value;
+  const data={
+    classeId:$("course-class").value, jour:$("course-day").value,
+    heureDebut:$("start-time").value, heureFin:$("end-time").value,
+    matiere:$("subject").value.trim(), professeur:$("teacher").value.trim()
+  };
+  if(!data.classeId){message($("course-message"),"Choisissez une classe.",true);return;}
+  if(data.heureDebut>=data.heureFin){message($("course-message"),"L'heure de fin doit être après l'heure de début.",true);return;}
+  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && c.jour===data.jour && data.heureDebut<c.heureFin && data.heureFin>c.heureDebut);
+  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe de ${conflict.heureDebut} à ${conflict.heureFin}.`,true);return;}
+  try{
+    if(id) await updateDoc(doc(db,"cours",id),data);
+    else await addDoc(collection(db,"cours"),{...data,createdAt:new Date().toISOString()});
+    resetCourseForm(); message($("course-message"),"Cours enregistré avec succès.");
+  }catch(err){message($("course-message"),"Enregistrement impossible. Vérifiez les règles Firestore.",true);console.error(err);}
+});
+function resetCourseForm(){
+  $("course-form").reset();$("course-id").value="";$("course-submit").textContent="Ajouter le cours";$("cancel-course-edit").classList.add("hidden");
+}
+$("cancel-course-edit").addEventListener("click",resetCourseForm);
+
+function className(id){return classes.find(c=>c.id===id)?.nom || "Classe supprimée/inconnue";}
+function renderAdminCourses(){
+  if(!courses.length){$("admin-course-list").innerHTML='<p class="muted">Aucun cours enregistré.</p>';return;}
+  const sorted=[...courses].sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
+  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))}<br><span class="muted">${safeText(c.jour)} · ${safeText(c.heureDebut)}–${safeText(c.heureFin)} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
+}
+$("admin-course-list").addEventListener("click",async e=>{
+  const edit=e.target.closest("[data-edit-course]")?.dataset.editCourse;
+  const del=e.target.closest("[data-delete-course]")?.dataset.deleteCourse;
+  if(edit){
+    const c=courses.find(x=>x.id===edit);if(!c)return;
+    $("course-id").value=c.id;$("course-class").value=c.classeId;$("course-day").value=c.jour;
+    $("start-time").value=c.heureDebut;$("end-time").value=c.heureFin;
+    $("subject").value=c.matiere;$("teacher").value=c.professeur;
+    $("course-submit").textContent="Enregistrer les modifications";$("cancel-course-edit").classList.remove("hidden");
+    $("course-form").scrollIntoView({behavior:"smooth"});
+  }
+  if(del && confirm("Supprimer définitivement ce cours ?")){
+    try{await deleteDoc(doc(db,"cours",del));}catch(err){alert("Suppression impossible. Vérifiez vos droits administrateur.");console.error(err);}
+  }
+});
+
+$("filter-class").addEventListener("change",renderPublicSchedule);
+$("filter-day").addEventListener("change",renderPublicSchedule);
+$("filter-teacher").addEventListener("input",renderPublicSchedule);
+function renderPublicSchedule(){
+  if(!classes.length && !courses.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours à afficher pour le moment.</p>';return;}
+  const classFilter=$("filter-class").value, dayFilter=$("filter-day").value;
+  const teacherFilter=$("filter-teacher").value.trim().toLocaleLowerCase("fr");
+  const filtered=courses.filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jour===dayFilter)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
+  filtered.sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
+  if(!filtered.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours ne correspond à votre recherche.</p>';return;}
+  $("public-schedule").innerHTML=days.map(day=>{
+    const list=filtered.filter(c=>c.jour===day);if(!list.length)return "";
+    return `<h3 class="day-title">${day}</h3>`+list.map(c=>`<div class="course"><div class="row"><strong>${safeText(c.matiere)}</strong><span class="badge">${safeText(c.heureDebut)} – ${safeText(c.heureFin)}</span></div><div>${safeText(className(c.classeId))}</div><div class="muted">Professeur : ${safeText(c.professeur)}</div></div>`).join("");
+  }).join("");
+}
+</script>
+</body>
+</html>
