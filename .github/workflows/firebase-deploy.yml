@@ -16,7 +16,7 @@ jobs:
 
       - name: Verify Firebase secret
         env:
-          FIREBASE_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MADRAS­SA_WEB }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MADRASSA_WEB }}
         run: |
           if [ -z "$FIREBASE_KEY" ]; then
             echo "SECRET ABSENT"
@@ -28,6 +28,6 @@ jobs:
       - name: Deploy to Firebase
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MADRAS­SA_WEB }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MADRASSA_WEB }}'
           channelId: live
           projectId: madrassa-web
