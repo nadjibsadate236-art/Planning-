@@ -12,6 +12,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+            - name: Verify Firebase secret
+      env:
+        FIREBASE_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MADRASSA_WEB }}
+      run: |
+        if [ -z "$FIREBASE_KEY" ]; then
+          echo "SECRET ABSENT"
+          exit 1
+        else
+          echo "SECRET DETECTE"
+        fi
 
       - name: Deploy to Firebase
         uses: FirebaseExtended/action-hosting-deploy@v0
