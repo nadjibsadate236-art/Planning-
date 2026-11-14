@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emploi du Temps — Madrassa</title>
+<style>
+:root{--green:#10513f;--green2:#176b55;--pale:#f3f6f5;--text:#263238;--muted:#64748b;--border:#e2e8f0}
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:transparent;margin:0;padding:10px;color:var(--text)}
+.page-header{background:var(--green);color:white;padding:22px 20px;border-radius:12px;margin:0 0 18px;box-shadow:0 2px 8px #0000000c}
+.page-header h1{font-size:1.45rem;margin:0 0 7px}
+.page-header p{margin:0;color:#d8eee7;font-size:.95rem}
+.panel{background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 8px #0000000c}
+.header-control{text-align:center;margin:0}
+select{padding:12px 14px;font-size:16px;border-radius:8px;border:2px solid var(--green2);width:100%;max-width:440px;background:#fff;color:var(--text);cursor:pointer;box-shadow:0 2px 5px #00000008}
+.schedule-container{display:none}
+.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.day-column{display:flex;flex-direction:column;gap:10px;min-width:0}
+.day-header{background:var(--green);color:white;text-align:center;padding:11px 8px;font-weight:bold;border-radius:8px;text-transform:uppercase;font-size:12px;letter-spacing:.3px}
+.course-card{background:#f8fbf9;border:1px solid #e4eee9;border-left:5px solid var(--green2);padding:12px;border-radius:8px;box-shadow:0 2px 5px #00000008;overflow-wrap:anywhere}
+.course-time{font-weight:bold;color:#176b55;font-size:13px}
+.course-subject{color:var(--green);font-weight:bold;margin:6px 0;font-size:15px}
+.course-teacher{color:var(--muted);font-size:12px}
+.empty{border-left-color:#d7e2dc;text-align:center;color:#94a3a0;font-style:italic;background:#fafcfb}
+.message{text-align:center;color:var(--muted);padding:13px 8px;font-size:.92rem}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.day-header{margin-top:8px}.panel{padding:14px}.page-header{padding:18px}}
+</style></head><body>
+<header class="page-header">
+  <h1>📚 Emploi du temps de la Madrassa</h1>
+  <p>Sélectionnez votre classe pour consulter les cours de la semaine.</p>
+</header>
+<section class="panel">
+  <div class="header-control"><select id="select-classe-public"><option value="">-- Sélectionnez votre classe --</option></select></div>
+  <div id="message" class="message">Chargement des classes…</div>
+</section>
+<div id="schedule-container" class="schedule-container panel"><div class="grid" id="schedule-grid"></div></div>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import {getFirestore,collection,onSnapshot,query,where} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+const firebaseConfig = {
+  apiKey: "AIzaSyBiiF6i7vweIIyyjKH0p-CP20iHaDKspkY",
+  authDomain: "madrassa-web.firebaseapp.com",
+  projectId: "madrassa-web",
+  storageBucket: "madrassa-web.firebasestorage.app",
+  messagingSenderId: "214049102730",
+  appId: "1:214049102730:web:78f2180bec288b08db4673",
+  measurementId: "G-8QQ3P72GRE"
+};
+const app=initializeApp(firebaseConfig),db=getFirestore(app),$=id=>document.getElementById(id);
+const select=$("select-classe-public"),container=$("schedule-container"),grid=$("schedule-grid"),msg=$("message");
+const days=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let stopCourses=null,classes=[];
+onSnapshot(collection(db,"classes"),snap=>{
+ classes=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
+ const previous=select.value;
+ select.innerHTML='<option value="">-- Sélectionnez votre classe --</option>'+classes.map(c=>`<option value="${esc(c.id)}">${esc(c.nom)}</option>`).join("");
+ if(classes.some(c=>c.id===previous))select.value=previous;
+ else {select.value="";if(stopCourses){stopCourses();stopCourses=null}container.style.display="none";msg.textContent=classes.length?"Choisissez votre classe pour afficher son emploi du temps.":"Aucune classe n'est encore disponible."}
+},err=>{msg.textContent="Impossible de charger les classes. Vérifiez les règles Firestore.";console.error(err)});
+select.addEventListener("change",()=>{
+ if(stopCourses){stopCourses();stopCourses=null}
+ const id=select.value;grid.innerHTML="";
+ if(!id){container.style.display="none";msg.textContent="Choisissez votre classe pour afficher son emploi du temps.";return}
+ msg.textContent="Chargement des cours…";container.style.display="block";
+ stopCourses=onSnapshot(query(collection(db,"cours"),where("classeId","==",id)),snap=>{
+  const courses=snap.docs.map(d=>d.data()).sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
+  render(courses);msg.textContent=courses.length?"Emploi du temps mis à jour automatiquement.":"Aucun cours enregistré pour cette classe.";
+ },err=>{msg.textContent="Impossible de charger les cours.";console.error(err)});
+});
+function render(courses){
+ grid.innerHTML="";
+ days.forEach(day=>{
+  const col=document.createElement("section");col.className="day-column";
+  const heading=document.createElement("div");heading.className="day-header";heading.textContent=day;col.appendChild(heading);
+  const todays=courses.filter(c=>c.jour===day);
+  if(!todays.length){const empty=document.createElement("div");empty.className="course-card empty";empty.textContent="Aucun cours";col.appendChild(empty)}
+  todays.forEach(c=>{
+   const card=document.createElement("article");card.className="course-card";
+   card.innerHTML=`<div class="course-time">${esc(c.heureDebut)} – ${esc(c.heureFin)}</div><div class="course-subject">${esc(c.matiere)}</div><div class="course-teacher">🧑‍🏫 ${esc(c.professeur)}</div>`;
+   col.appendChild(card);
+  });
+  grid.appendChild(col);
+ });
+}
+</script></body></html>
