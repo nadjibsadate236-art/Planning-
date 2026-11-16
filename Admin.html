@@ -29,6 +29,8 @@ form button{margin-top:14px}.secondary{background:#e8efec;color:#174d3f}.danger{
 .badge.remote{background:#e6eefb;color:#1e4e8c}
 .badge.week{background:#fdf1dc;color:#8a5a00}
 .tzhint{font-size:.8rem;color:var(--muted);margin-top:5px}
+.group-days{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.badge.day{background:#eef4f1;color:#10513f;border:1px solid #d5e4dd}
 .day-picker{display:flex;flex-wrap:wrap;gap:7px}
 .day-chip{position:relative;margin:0;font-weight:700}
 .day-chip input{position:absolute;opacity:0;width:0;height:0}
@@ -341,10 +343,10 @@ function refreshClassSelects() {
   const options = classes.map(c=>`<option value="${safeText(c.id)}">${safeText(c.nom)}</option>`).join("");
   $("course-class").innerHTML = '<option value="">Choisir une classe</option>'+options;
   const selected = $("filter-class").value;
-  $("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
+$("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
   $("filter-class").value = classes.some(c=>c.id===selected) ? selected : "";
 }
-  onSnapshot(collection(db,"classes"), snap => {
+onSnapshot(collection(db,"classes"), snap => {
   classes = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
   refreshClassSelects();
   renderClasses();
@@ -412,7 +414,9 @@ document.querySelector(".day-shortcuts").addEventListener("click", e=>{
 });
 $("course-form").addEventListener("submit",async e=>{
   e.preventDefault(); if(!currentUser)return;
-  const id=$("course-id").value;
+  // En modification, "course-id" contient les identifiants de tous les cours du groupe (séparés par des virgules).
+  const ids=$("course-id").value?$("course-id").value.split(","):[];
+  const members=ids.map(i=>courses.find(c=>c.id===i)).filter(Boolean);
   const chosen=selectedDays();
   const data={
     classeId:$("course-class").value, jour:chosen[0]||"",
@@ -426,26 +430,28 @@ $("course-form").addEventListener("submit",async e=>{
   if(!MODES[data.mode]){message($("course-message"),"Choisissez le mode du cours (présentiel ou distanciel).",true);return;}
   if(!data.fuseau){message($("course-message"),"Choisissez un fuseau horaire.",true);return;}
   if(data.heureDebut>=data.heureFin){message($("course-message"),"L'heure de fin doit être après l'heure de début.",true);return;}
-  // En modification, le cours édité garde son jour d'origine s'il est toujours coché ; les autres jours cochés deviennent des copies.
-  const editedDay=id?(chosen.includes(courses.find(c=>c.id===id)?.jour)?courses.find(c=>c.id===id).jour:chosen[0]):null;
   // Contrôle des conflits pour chaque jour demandé : aucune écriture n'a lieu si l'un d'eux pose problème.
   const conflicts=[];
   for(const jour of chosen){
     const span=weekSpan({...data,jour});
-    const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && weeksOverlap(c.semaine,data.semaine) && overlap(weekSpan(c),span));
+    const conflict=courses.find(c=>!ids.includes(c.id) && c.classeId===data.classeId && weeksOverlap(c.semaine,data.semaine) && overlap(weekSpan(c),span));
     if(conflict)conflicts.push(`${jour} (déjà : ${conflict.jour} ${timeLabel(conflict)}${conflict.semaine&&conflict.semaine!=="toutes"?` · semaine ${conflict.semaine}`:""})`);
   }
   if(conflicts.length){message($("course-message"),`Conflit dans cette classe, rien n'a été enregistré : ${conflicts.join(" ; ")}.`,true);return;}
   try{
     const batch=writeBatch(db);
     const now=new Date().toISOString();
+    // Chaque jour coché met à jour le cours existant de ce jour, ou en crée un ; les jours décochés sont supprimés.
+    const used=new Set();
     for(const jour of chosen){
-      if(id && jour===editedDay) batch.update(doc(db,"cours",id),{...data,jour});
+      const m=members.find(x=>x.jour===jour&&!used.has(x.id));
+      if(m){used.add(m.id);batch.update(doc(db,"cours",m.id),{...data,jour});}
       else batch.set(doc(collection(db,"cours")),{...data,jour,createdAt:now});
     }
+    members.filter(m=>!used.has(m.id)).forEach(m=>batch.delete(doc(db,"cours",m.id)));
     await batch.commit();
     resetCourseForm();
-    message($("course-message"),chosen.length>1?`${chosen.length} cours enregistrés (${chosen.join(", ")}).`:"Cours enregistré avec succès.");
+    message($("course-message"),members.length?`Modifications enregistrées (${chosen.join(", ")}).`:chosen.length>1?`${chosen.length} cours enregistrés (${chosen.join(", ")}).`:"Cours enregistré avec succès.");
   }catch(err){message($("course-message"),"Enregistrement impossible. Vérifiez les règles Firestore.",true);console.error(err);}
 });
 function resetCourseForm(){
@@ -456,17 +462,30 @@ function resetCourseForm(){
 $("cancel-course-edit").addEventListener("click",resetCourseForm);
 
 function className(id){return classes.find(c=>c.id===id)?.nom || "Classe supprimée/inconnue";}
+// Regroupement : les cours identiques (même classe, matière, professeur, heures, mode, fuseau, semaine) sur des jours différents ne forment qu'une ligne.
+function groupKey(c){return [c.classeId,(c.matiere||"").trim(),(c.professeur||"").trim(),c.heureDebut,c.heureFin,c.mode||"",c.fuseau||"",c.semaine||"toutes"].join("␟");}
+function buildGroups(){
+  const map=new Map();
+  courses.forEach(c=>{const k=groupKey(c);if(!map.has(k))map.set(k,[]);map.get(k).push(c);});
+  return [...map.values()]
+    .map(m=>m.sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)))
+    .sort((a,b)=>days.indexOf(a[0].jour)-days.indexOf(b[0].jour)||(a[0].heureDebut||"").localeCompare(b[0].heureDebut||""));
+}
 function renderAdminCourses(){
   if(!courses.length){$("admin-course-list").innerHTML='<p class="muted">Aucun cours enregistré.</p>';return;}
-  const sorted=[...courses].sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
-  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)} ${weekBadge(c.semaine)}<br><span class="muted">${safeText(c.jour)} · ${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
+  $("admin-course-list").innerHTML=buildGroups().map(g=>{
+    const c=g[0], ids=g.map(x=>x.id).join(",");
+    const dayTags=g.map(x=>`<span class="badge day">${safeText(x.jour)}</span>`).join("");
+    return `<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)} ${weekBadge(c.semaine)}<br><span class="muted">${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span><div class="group-days">${dayTags}</div></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(ids)}">Modifier${g.length>1?` (${g.length} jours)`:""}</button><button class="danger small" data-delete-course="${safeText(ids)}">Supprimer${g.length>1?` (${g.length} jours)`:""}</button></div></div></div>`;
+  }).join("");
 }
 $("admin-course-list").addEventListener("click",async e=>{
   const edit=e.target.closest("[data-edit-course]")?.dataset.editCourse;
   const del=e.target.closest("[data-delete-course]")?.dataset.deleteCourse;
   if(edit){
-    const c=courses.find(x=>x.id===edit);if(!c)return;
-    $("course-id").value=c.id;$("course-class").value=c.classeId;setDays([c.jour]);
+    const group=edit.split(",").map(i=>courses.find(x=>x.id===i)).filter(Boolean);
+    const c=group[0];if(!c)return;
+    $("course-id").value=group.map(x=>x.id).join(",");$("course-class").value=c.classeId;setDays(group.map(x=>x.jour));
     $("start-time").value=c.heureDebut;$("end-time").value=c.heureFin;
     $("subject").value=c.matiere;$("teacher").value=c.professeur;
     $("course-mode").value=c.mode||"";
@@ -476,8 +495,17 @@ $("admin-course-list").addEventListener("click",async e=>{
     $("course-submit").textContent="Enregistrer les modifications";$("cancel-course-edit").classList.remove("hidden");
     $("course-form").scrollIntoView({behavior:"smooth"});
   }
-  if(del && confirm("Supprimer définitivement ce cours ?")){
-    try{await deleteDoc(doc(db,"cours",del));}catch(err){alert("Suppression impossible. Vérifiez vos droits administrateur.");console.error(err);}
+  if(del){
+    const group=del.split(",").map(i=>courses.find(x=>x.id===i)).filter(Boolean);
+    if(!group.length)return;
+    const label=group.length>1?`ce cours sur ses ${group.length} jours (${group.map(x=>x.jour).join(", ")})`:"ce cours";
+    if(!confirm(`Supprimer définitivement ${label} ?`))return;
+    try{
+      const batch=writeBatch(db);
+      group.forEach(x=>batch.delete(doc(db,"cours",x.id)));
+      await batch.commit();
+      if($("course-id").value && $("course-id").value.split(",").some(i=>group.some(x=>x.id===i)))resetCourseForm();
+    }catch(err){alert("Suppression impossible. Vérifiez vos droits administrateur.");console.error(err);}
   }
 });
 
@@ -501,5 +529,3 @@ function renderPublicSchedule(){
 </script>
 </body>
 </html>
-
-onSnapshot(collection(db,"classes"), snap
