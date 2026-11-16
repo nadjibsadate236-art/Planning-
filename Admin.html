@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Madrassah — Gestion des emplois du temps</title>
+<title>Madrassa — Gestion des emplois du temps</title>
 <style>
 :root{--primary:#176b55;--primary-dark:#10513f;--bg:#f3f6f5;--card:#fff;--text:#1f2937;--muted:#64748b;--danger:#c0392b;--border:#e2e8f0}
 *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -26,6 +26,8 @@ form button{margin-top:14px}.secondary{background:#e8efec;color:#174d3f}.danger{
 .item{padding:12px 0;border-bottom:1px solid var(--border)}.item:last-child{border-bottom:0}
 .actions{display:flex;gap:7px;flex-wrap:wrap}.course{border-left:4px solid var(--primary);padding:12px;margin:10px 0;background:#f8fbf9;border-radius:7px}
 .badge{display:inline-block;background:#e3f2eb;color:#15543e;padding:4px 8px;border-radius:20px;font-size:.8rem;font-weight:700}
+.badge.remote{background:#e6eefb;color:#1e4e8c}
+.tzhint{font-size:.8rem;color:var(--muted);margin-top:5px}
 .day-title{margin-top:20px;color:var(--primary-dark);border-bottom:1px solid var(--border);padding-bottom:7px}
 footer{text-align:center;color:var(--muted);padding:25px}
 #status{font-size:.9rem}
@@ -34,7 +36,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 </head>
 <body>
 <header><div class="wrap">
-<h1>📚 Madrassah — Emploi du temps</h1>
+<h1>📚 Madrassa — Emploi du temps</h1>
 <p>Consultez les cours ou gérez l'organisation de la Madrassa.</p>
 </div></header>
 <nav><div class="wrap">
@@ -51,7 +53,8 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <div><label for="filter-day">Jour</label><select id="filter-day"><option value="">Tous les jours</option>
 <option>Lundi</option><option>Mardi</option><option>Mercredi</option><option>Jeudi</option><option>Vendredi</option><option>Samedi</option><option>Dimanche</option></select></div>
 <div><label for="filter-teacher">Professeur</label><input id="filter-teacher" placeholder="Rechercher un professeur"></div>
-</div></div>
+</div>
+<p class="tzhint" id="viewer-tz-note"></p></div>
 <div class="card"><div id="public-schedule" class="muted">Chargement de l'emploi du temps…</div></div>
 </section>
 
@@ -91,6 +94,11 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <div><label for="end-time">Heure de fin</label><input id="end-time" type="time" required></div>
 <div><label for="subject">Matière</label><input id="subject" placeholder="Ex. Coran, arabe" required maxlength="100"></div>
 <div><label for="teacher">Professeur</label><input id="teacher" placeholder="Nom du professeur" required maxlength="100"></div>
+<div><label for="course-mode">Mode du cours</label><select id="course-mode" required>
+<option value="">Choisir un mode</option>
+<option value="presentiel">🏫 Présentiel</option>
+<option value="distanciel">💻 Distanciel</option></select></div>
+<div><label for="course-tz">Fuseau horaire des heures saisies</label><select id="course-tz" required></select><div class="tzhint" id="tz-hint"></div></div>
 </div>
 <div class="actions"><button class="primary" type="submit" id="course-submit">Ajouter le cours</button><button class="secondary hidden" id="cancel-course-edit" type="button">Annuler</button></div>
 <div id="course-message" aria-live="polite"></div>
@@ -101,7 +109,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 </div>
 </section>
 </main>
-<footer>Plateforme de gestion de la Madrassah</footer>
+<footer>Plateforme de gestion de la Madrassa</footer>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -123,6 +131,8 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const $ = id => document.getElementById(id);
 const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+const MODES = {presentiel:"🏫 Présentiel", distanciel:"💻 Distanciel"};
+const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 let classes = [];
 let courses = [];
 let currentUser = null;
@@ -133,6 +143,93 @@ function safeText(value="") {
 function message(target, text, isError=false) {
   target.innerHTML = `<div class="notice ${isError?"error":""}">${safeText(text)}</div>`;
 }
+
+/* ---------- Fuseaux horaires ---------- */
+function tzShort(tz) {
+  try {
+    const parts = new Intl.DateTimeFormat("fr-FR", {timeZone: tz, timeZoneName: "shortOffset"}).formatToParts(new Date());
+    return parts.find(p => p.type === "timeZoneName")?.value || tz;
+  } catch { return tz; }
+}
+/*TZ-START*/
+const viewerTz = browserTz;
+// Composantes locales (année, mois, jour, heure…) d'un instant dans un fuseau donné.
+function wall(date, tz) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  }).formatToParts(date);
+  return Object.fromEntries(parts.map(p => [p.type, +p.value]));
+}
+// Décalage (en minutes) du fuseau par rapport à UTC à l'instant donné.
+function tzOffsetMin(tz, date = new Date()) {
+  const o = wall(date, tz);
+  return Math.round((Date.UTC(o.year, o.month - 1, o.day, o.hour, o.minute, o.second) - Math.floor(date.getTime() / 1000) * 1000) / 60000);
+}
+// Instant (ms UTC) correspondant à une heure "murale" dans un fuseau (gère l'heure d'été).
+function zonedToInstant(y, m, d, h, mi, tz) {
+  const guess = Date.UTC(y, m - 1, d, h, mi);
+  const off = tzOffsetMin(tz, new Date(guess));
+  let t = guess - off * 60000;
+  const off2 = tzOffsetMin(tz, new Date(t));
+  if (off2 !== off) t = guess - off2 * 60000;
+  return t;
+}
+// Convertit un cours (jour + heures dans SON fuseau) vers le fuseau de l'appareil qui consulte.
+function toViewer(c) {
+  const base = {...c, jourAff: c.jour, debutAff: c.heureDebut, finAff: c.heureFin, modifie: false};
+  const di = days.indexOf(c.jour);
+  if (!c.fuseau || di < 0 || !c.heureDebut || !c.heureFin) return base;
+  try {
+    const now = wall(new Date(), c.fuseau);
+    const todayIdx = (new Date(Date.UTC(now.year, now.month - 1, now.day)).getUTCDay() + 6) % 7;
+    const target = new Date(Date.UTC(now.year, now.month - 1, now.day + ((di - todayIdx + 7) % 7)));
+    const y = target.getUTCFullYear(), m = target.getUTCMonth() + 1, d = target.getUTCDate();
+    const [h1, m1] = c.heureDebut.split(":").map(Number), [h2, m2] = c.heureFin.split(":").map(Number);
+    const s = wall(new Date(zonedToInstant(y, m, d, h1, m1, c.fuseau)), viewerTz);
+    const e = wall(new Date(zonedToInstant(y, m, d, h2, m2, c.fuseau)), viewerTz);
+    const idx = (new Date(Date.UTC(s.year, s.month - 1, s.day)).getUTCDay() + 6) % 7;
+    const p = n => String(n).padStart(2, "0");
+    const out = {...base, jourAff: days[idx], debutAff: `${p(s.hour)}:${p(s.minute)}`, finAff: `${p(e.hour)}:${p(e.minute)}`};
+    out.modifie = out.jourAff !== c.jour || out.debutAff !== c.heureDebut || out.finAff !== c.heureFin;
+    return out;
+  } catch { return base; }
+}
+/*TZ-END*/
+const originLine = c => c.modifie ? `<div class="tzhint">Heure d'origine : ${safeText(c.jour)} ${safeText(c.heureDebut)} – ${safeText(c.heureFin)} (${safeText(tzShort(c.fuseau))})</div>` : "";
+$("viewer-tz-note").textContent = `🕒 Dans cette vue, les heures sont affichées selon le fuseau de votre appareil : ${viewerTz.replace(/_/g, " ")} (${tzShort(viewerTz)}).`;
+const toMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+// Position du cours dans la semaine, ramenée en UTC (pour comparer des cours saisis dans des fuseaux différents).
+function weekSpan(c) {
+  const off = tzOffsetMin(c.fuseau || browserTz);
+  const start = (((days.indexOf(c.jour) * 1440 + toMin(c.heureDebut) - off) % 10080) + 10080) % 10080;
+  return {s: start, e: start + (toMin(c.heureFin) - toMin(c.heureDebut))};
+}
+const overlap = (a, b) => [-10080, 0, 10080].some(k => a.s < b.e + k && a.e > b.s + k);
+function timeLabel(c) {
+  return `${c.heureDebut}–${c.heureFin}` + (c.fuseau ? ` (${tzShort(c.fuseau)} · ${c.fuseau.replace(/_/g, " ")})` : "");
+}
+function modeBadge(c) {
+  return MODES[c.mode] ? `<span class="badge ${c.mode === "distanciel" ? "remote" : ""}">${MODES[c.mode]}</span>` : "";
+}
+function updateTzHint() {
+  const tz = $("course-tz").value;
+  $("tz-hint").textContent = tz ? `Heures saisies en ${tzShort(tz)}${tz === browserTz ? " (fuseau détecté sur votre appareil)" : ""}.` : "";
+}
+function populateTimezones() {
+  let zones = typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : ["Indian/Reunion", "Europe/Paris", "Africa/Casablanca", "America/Montreal"];
+  zones = [...new Set([...zones, "UTC", browserTz])].sort((a, b) => a.localeCompare(b));
+  const select = $("course-tz");
+  select.innerHTML = "";
+  zones.forEach(z => select.add(new Option(`${z.replace(/_/g, " ")} (${tzShort(z)})`, z, z === browserTz, z === browserTz)));
+  updateTzHint();
+}
+populateTimezones();
+$("course-tz").addEventListener("change", updateTzHint);
+
+/* ---------- Navigation et connexion ---------- */
 function showTab(which) {
   $("public-view").classList.toggle("hidden", which !== "public");
   $("admin-view").classList.toggle("hidden", which !== "admin");
@@ -161,6 +258,7 @@ onAuthStateChanged(auth, user => {
   $("status").textContent = user ? `Connecté : ${user.email}` : "Mode consultation";
 });
 
+/* ---------- Classes ---------- */
 function refreshClassSelects() {
   const options = classes.map(c=>`<option value="${safeText(c.id)}">${safeText(c.nom)}</option>`).join("");
   $("course-class").innerHTML = '<option value="">Choisir une classe</option>'+options;
@@ -224,18 +322,23 @@ function resetClassForm(){
 }
 $("cancel-class-edit").addEventListener("click",resetClassForm);
 
+/* ---------- Cours ---------- */
 $("course-form").addEventListener("submit",async e=>{
   e.preventDefault(); if(!currentUser)return;
   const id=$("course-id").value;
   const data={
     classeId:$("course-class").value, jour:$("course-day").value,
     heureDebut:$("start-time").value, heureFin:$("end-time").value,
-    matiere:$("subject").value.trim(), professeur:$("teacher").value.trim()
+    matiere:$("subject").value.trim(), professeur:$("teacher").value.trim(),
+    mode:$("course-mode").value, fuseau:$("course-tz").value
   };
   if(!data.classeId){message($("course-message"),"Choisissez une classe.",true);return;}
+  if(!MODES[data.mode]){message($("course-message"),"Choisissez le mode du cours (présentiel ou distanciel).",true);return;}
+  if(!data.fuseau){message($("course-message"),"Choisissez un fuseau horaire.",true);return;}
   if(data.heureDebut>=data.heureFin){message($("course-message"),"L'heure de fin doit être après l'heure de début.",true);return;}
-  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && c.jour===data.jour && data.heureDebut<c.heureFin && data.heureFin>c.heureDebut);
-  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe de ${conflict.heureDebut} à ${conflict.heureFin}.`,true);return;}
+  const span=weekSpan(data);
+  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && overlap(weekSpan(c),span));
+  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe (${conflict.jour} ${timeLabel(conflict)}).`,true);return;}
   try{
     if(id) await updateDoc(doc(db,"cours",id),data);
     else await addDoc(collection(db,"cours"),{...data,createdAt:new Date().toISOString()});
@@ -244,6 +347,7 @@ $("course-form").addEventListener("submit",async e=>{
 });
 function resetCourseForm(){
   $("course-form").reset();$("course-id").value="";$("course-submit").textContent="Ajouter le cours";$("cancel-course-edit").classList.add("hidden");
+  updateTzHint();
 }
 $("cancel-course-edit").addEventListener("click",resetCourseForm);
 
@@ -251,7 +355,7 @@ function className(id){return classes.find(c=>c.id===id)?.nom || "Classe supprim
 function renderAdminCourses(){
   if(!courses.length){$("admin-course-list").innerHTML='<p class="muted">Aucun cours enregistré.</p>';return;}
   const sorted=[...courses].sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
-  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))}<br><span class="muted">${safeText(c.jour)} · ${safeText(c.heureDebut)}–${safeText(c.heureFin)} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
+  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)}<br><span class="muted">${safeText(c.jour)} · ${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
 }
 $("admin-course-list").addEventListener("click",async e=>{
   const edit=e.target.closest("[data-edit-course]")?.dataset.editCourse;
@@ -261,6 +365,9 @@ $("admin-course-list").addEventListener("click",async e=>{
     $("course-id").value=c.id;$("course-class").value=c.classeId;$("course-day").value=c.jour;
     $("start-time").value=c.heureDebut;$("end-time").value=c.heureFin;
     $("subject").value=c.matiere;$("teacher").value=c.professeur;
+    $("course-mode").value=c.mode||"";
+    $("course-tz").value=c.fuseau||browserTz;
+    updateTzHint();
     $("course-submit").textContent="Enregistrer les modifications";$("cancel-course-edit").classList.remove("hidden");
     $("course-form").scrollIntoView({behavior:"smooth"});
   }
@@ -269,6 +376,7 @@ $("admin-course-list").addEventListener("click",async e=>{
   }
 });
 
+/* ---------- Vue publique (dans la page admin) ---------- */
 $("filter-class").addEventListener("change",renderPublicSchedule);
 $("filter-day").addEventListener("change",renderPublicSchedule);
 $("filter-teacher").addEventListener("input",renderPublicSchedule);
@@ -276,12 +384,12 @@ function renderPublicSchedule(){
   if(!classes.length && !courses.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours à afficher pour le moment.</p>';return;}
   const classFilter=$("filter-class").value, dayFilter=$("filter-day").value;
   const teacherFilter=$("filter-teacher").value.trim().toLocaleLowerCase("fr");
-  const filtered=courses.filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jour===dayFilter)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
-  filtered.sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
+  const filtered=courses.map(toViewer).filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jourAff===dayFilter)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
+  filtered.sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
   if(!filtered.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours ne correspond à votre recherche.</p>';return;}
   $("public-schedule").innerHTML=days.map(day=>{
-    const list=filtered.filter(c=>c.jour===day);if(!list.length)return "";
-    return `<h3 class="day-title">${day}</h3>`+list.map(c=>`<div class="course"><div class="row"><strong>${safeText(c.matiere)}</strong><span class="badge">${safeText(c.heureDebut)} – ${safeText(c.heureFin)}</span></div><div>${safeText(className(c.classeId))}</div><div class="muted">Professeur : ${safeText(c.professeur)}</div></div>`).join("");
+    const list=filtered.filter(c=>c.jourAff===day);if(!list.length)return "";
+    return `<h3 class="day-title">${day}</h3>`+list.map(c=>`<div class="course"><div class="row"><strong>${safeText(c.matiere)}</strong><span class="badge">${safeText(c.debutAff)} – ${safeText(c.finAff)}</span></div><div>${safeText(className(c.classeId))} ${modeBadge(c)}</div><div class="muted">Professeur : ${safeText(c.professeur)}</div>${originLine(c)}</div>`).join("");
   }).join("");
 }
 </script>
