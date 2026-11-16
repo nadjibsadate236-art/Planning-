@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Emploi du Temps — Madrassah</title>
+<title>Emploi du Temps — Madrassa</title>
 <style>
 :root{--green:#10513f;--green2:#176b55;--pale:#f3f6f5;--text:#263238;--muted:#64748b;--border:#e2e8f0}
 *{box-sizing:border-box}
@@ -16,19 +16,25 @@ select{padding:12px 14px;font-size:16px;border-radius:8px;border:2px solid var(-
 .day-column{display:flex;flex-direction:column;gap:10px;min-width:0}
 .day-header{background:var(--green);color:white;text-align:center;padding:11px 8px;font-weight:bold;border-radius:8px;text-transform:uppercase;font-size:12px;letter-spacing:.3px}
 .course-card{background:#f8fbf9;border:1px solid #e4eee9;border-left:5px solid var(--green2);padding:12px;border-radius:8px;box-shadow:0 2px 5px #00000008;overflow-wrap:anywhere}
+.course-card.remote{border-left-color:#2f6fbd;background:#f6f9fd}
 .course-time{font-weight:bold;color:#176b55;font-size:13px}
+.course-origin{color:var(--muted);font-size:11px;margin-top:6px}
+.tz-info{margin-top:12px;text-align:center;color:var(--muted);font-size:.88rem}
 .course-subject{color:var(--green);font-weight:bold;margin:6px 0;font-size:15px}
 .course-teacher{color:var(--muted);font-size:12px}
+.course-mode{display:inline-block;margin-top:8px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:bold;background:#e3f2eb;color:#15543e}
+.course-mode.remote{background:#e6eefb;color:#1e4e8c}
 .empty{border-left-color:#d7e2dc;text-align:center;color:#94a3a0;font-style:italic;background:#fafcfb}
 .message{text-align:center;color:var(--muted);padding:13px 8px;font-size:.92rem}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.day-header{margin-top:8px}.panel{padding:14px}.page-header{padding:18px}}
 </style></head><body>
 <header class="page-header">
-  <h1>📚 Emploi du temps de la Madrassah</h1>
+  <h1>📚 Emploi du temps de la Madrassa</h1>
   <p>Sélectionnez votre classe pour consulter les cours de la semaine.</p>
 </header>
 <section class="panel">
   <div class="header-control"><select id="select-classe-public"><option value="">-- Sélectionnez votre classe --</option></select></div>
+  <div id="tz-info" class="tz-info"></div>
   <div id="message" class="message">Chargement des classes…</div>
 </section>
 <div id="schedule-container" class="schedule-container panel"><div class="grid" id="schedule-grid"></div></div>
@@ -47,7 +53,57 @@ const firebaseConfig = {
 const app=initializeApp(firebaseConfig),db=getFirestore(app),$=id=>document.getElementById(id);
 const select=$("select-classe-public"),container=$("schedule-container"),grid=$("schedule-grid"),msg=$("message");
 const days=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+const MODES={presentiel:"🏫 Présentiel",distanciel:"💻 Distanciel"};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function tzShort(tz){
+ try{
+  const parts=new Intl.DateTimeFormat("fr-FR",{timeZone:tz,timeZoneName:"shortOffset"}).formatToParts(new Date());
+  return parts.find(p=>p.type==="timeZoneName")?.value||tz;
+ }catch{return tz}
+}
+/*TZ-START*/
+const viewerTz=Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";
+// Composantes locales (année, mois, jour, heure…) d'un instant dans un fuseau donné.
+function wall(date,tz){
+ const parts=new Intl.DateTimeFormat("en-US",{timeZone:tz,hourCycle:"h23",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}).formatToParts(date);
+ return Object.fromEntries(parts.map(p=>[p.type,+p.value]));
+}
+function tzOffsetMin(tz,date=new Date()){
+ const o=wall(date,tz);
+ return Math.round((Date.UTC(o.year,o.month-1,o.day,o.hour,o.minute,o.second)-Math.floor(date.getTime()/1000)*1000)/60000);
+}
+// Instant (ms UTC) correspondant à une heure "murale" dans un fuseau (gère l'heure d'été).
+function zonedToInstant(y,m,d,h,mi,tz){
+ const guess=Date.UTC(y,m-1,d,h,mi);
+ const off=tzOffsetMin(tz,new Date(guess));
+ let t=guess-off*60000;
+ const off2=tzOffsetMin(tz,new Date(t));
+ if(off2!==off)t=guess-off2*60000;
+ return t;
+}
+// Convertit un cours (jour + heures dans SON fuseau) vers le fuseau de l'appareil qui consulte.
+function toViewer(c){
+ const base={...c,jourAff:c.jour,debutAff:c.heureDebut,finAff:c.heureFin,modifie:false};
+ const di=days.indexOf(c.jour);
+ if(!c.fuseau||di<0||!c.heureDebut||!c.heureFin)return base;
+ try{
+  const now=wall(new Date(),c.fuseau);
+  const todayIdx=(new Date(Date.UTC(now.year,now.month-1,now.day)).getUTCDay()+6)%7;
+  const target=new Date(Date.UTC(now.year,now.month-1,now.day+((di-todayIdx+7)%7)));
+  const y=target.getUTCFullYear(),m=target.getUTCMonth()+1,d=target.getUTCDate();
+  const [h1,m1]=c.heureDebut.split(":").map(Number),[h2,m2]=c.heureFin.split(":").map(Number);
+  const s=wall(new Date(zonedToInstant(y,m,d,h1,m1,c.fuseau)),viewerTz);
+  const e=wall(new Date(zonedToInstant(y,m,d,h2,m2,c.fuseau)),viewerTz);
+  const idx=(new Date(Date.UTC(s.year,s.month-1,s.day)).getUTCDay()+6)%7;
+  const p=n=>String(n).padStart(2,"0");
+  const out={...base,jourAff:days[idx],debutAff:`${p(s.hour)}:${p(s.minute)}`,finAff:`${p(e.hour)}:${p(e.minute)}`};
+  out.modifie=out.jourAff!==c.jour||out.debutAff!==c.heureDebut||out.finAff!==c.heureFin;
+  return out;
+ }catch{return base}
+}
+/*TZ-END*/
+const originLine=c=>c.modifie?`<div class="course-origin">Heure d'origine : ${esc(c.jour)} ${esc(c.heureDebut)} – ${esc(c.heureFin)} (${esc(tzShort(c.fuseau))})</div>`:"";
+$("tz-info").textContent=`🕒 Les heures sont affichées selon le fuseau de votre appareil : ${viewerTz.replace(/_/g," ")} (${tzShort(viewerTz)}).`;
 let stopCourses=null,classes=[];
 onSnapshot(collection(db,"classes"),snap=>{
  classes=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
@@ -66,16 +122,19 @@ select.addEventListener("change",()=>{
   render(courses);msg.textContent=courses.length?"Emploi du temps mis à jour automatiquement.":"Aucun cours enregistré pour cette classe.";
  },err=>{msg.textContent="Impossible de charger les cours.";console.error(err)});
 });
-function render(courses){
+function render(rawCourses){
  grid.innerHTML="";
+ const courses=rawCourses.map(toViewer).sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
  days.forEach(day=>{
   const col=document.createElement("section");col.className="day-column";
   const heading=document.createElement("div");heading.className="day-header";heading.textContent=day;col.appendChild(heading);
-  const todays=courses.filter(c=>c.jour===day);
+  const todays=courses.filter(c=>c.jourAff===day);
   if(!todays.length){const empty=document.createElement("div");empty.className="course-card empty";empty.textContent="Aucun cours";col.appendChild(empty)}
   todays.forEach(c=>{
-   const card=document.createElement("article");card.className="course-card";
-   card.innerHTML=`<div class="course-time">${esc(c.heureDebut)} – ${esc(c.heureFin)}</div><div class="course-subject">${esc(c.matiere)}</div><div class="course-teacher">🧑‍🏫 ${esc(c.professeur)}</div>`;
+   const remote=c.mode==="distanciel";
+   const card=document.createElement("article");card.className="course-card"+(remote?" remote":"");
+   const mode=MODES[c.mode]?`<div class="course-mode${remote?" remote":""}">${MODES[c.mode]}</div>`:"";
+   card.innerHTML=`<div class="course-time">${esc(c.debutAff)} – ${esc(c.finAff)}</div><div class="course-subject">${esc(c.matiere)}</div><div class="course-teacher">🧑‍🏫 ${esc(c.professeur)}</div>${mode}${originLine(c)}`;
    col.appendChild(card);
   });
   grid.appendChild(col);
