@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Madrassah — Gestion des emplois du temps</title>
+<title>Madrassa — Gestion des emplois du temps</title>
 <style>
 :root{--primary:#176b55;--primary-dark:#10513f;--bg:#f3f6f5;--card:#fff;--text:#1f2937;--muted:#64748b;--danger:#c0392b;--border:#e2e8f0}
 *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -27,6 +27,7 @@ form button{margin-top:14px}.secondary{background:#e8efec;color:#174d3f}.danger{
 .actions{display:flex;gap:7px;flex-wrap:wrap}.course{border-left:4px solid var(--primary);padding:12px;margin:10px 0;background:#f8fbf9;border-radius:7px}
 .badge{display:inline-block;background:#e3f2eb;color:#15543e;padding:4px 8px;border-radius:20px;font-size:.8rem;font-weight:700}
 .badge.remote{background:#e6eefb;color:#1e4e8c}
+.badge.week{background:#fdf1dc;color:#8a5a00}
 .tzhint{font-size:.8rem;color:var(--muted);margin-top:5px}
 .day-title{margin-top:20px;color:var(--primary-dark);border-bottom:1px solid var(--border);padding-bottom:7px}
 footer{text-align:center;color:var(--muted);padding:25px}
@@ -37,7 +38,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <body>
 <header><div class="wrap">
 <h1>📚 Madrassa — Emploi du temps</h1>
-<p>Consultez les cours ou gérez l'organisation de la Madrassah.</p>
+<p>Consultez les cours ou gérez l'organisation de la Madrassa.</p>
 </div></header>
 <nav><div class="wrap">
 <button class="tab active" id="tab-public" type="button">Emploi du temps</button>
@@ -52,8 +53,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <div><label for="filter-class">Classe</label><select id="filter-class"><option value="">Toutes les classes</option></select></div>
 <div><label for="filter-day">Jour</label><select id="filter-day"><option value="">Tous les jours</option>
 <option>Lundi</option><option>Mardi</option><option>Mercredi</option><option>Jeudi</option><option>Vendredi</option><option>Samedi</option><option>Dimanche</option></select></div>
-<div><label for="filter-teacher">Professeur</label><input id="filter-teacher" placeholder="Rechercher un professeur"></div>
-</div>
+<div><label for="filter-teacher">Professeur</label><input id="filter-teacher" placeholder="Rechercher un professeur"></div></div>
 <p class="tzhint" id="viewer-tz-note"></p></div>
 <div class="card"><div id="public-schedule" class="muted">Chargement de l'emploi du temps…</div></div>
 </section>
@@ -61,7 +61,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <section id="admin-view" class="hidden">
 <div id="login-card" class="card">
 <h2>Connexion administrateur</h2>
-<p class="muted">Connectez-vous avec à l'aide de votre compte Firebase Authentication.</p>
+<p class="muted">Connectez-vous avec un compte créé dans Firebase Authentication.</p>
 <form id="login-form">
 <label for="email">Adresse e-mail</label><input id="email" type="email" autocomplete="username" required>
 <label for="password">Mot de passe</label><input id="password" type="password" autocomplete="current-password" required>
@@ -71,6 +71,17 @@ footer{text-align:center;color:var(--muted);padding:25px}
 
 <div id="admin-panel" class="hidden">
 <div class="card"><div class="row"><div><h2>Administration</h2><p class="muted">Vous êtes connecté.</p></div><button id="logout" class="secondary" type="button">Se déconnecter</button></div></div>
+
+<div class="card">
+<h2>Semaines A / B</h2>
+<p class="muted">Indiquez la date à laquelle commence la semaine A (idéalement un lundi). Les semaines suivantes alternent automatiquement (A, B, A, B…) et les emplois du temps affichent la bonne semaine sans aucune action de votre part.</p>
+<form id="week-form">
+<div class="grid"><div><label for="ref-a">La semaine A commence le</label><input id="ref-a" type="date" required></div></div>
+<div class="actions"><button class="primary" type="submit">Enregistrer</button></div>
+</form>
+<div id="week-status" class="tzhint"></div>
+<div id="week-message" aria-live="polite"></div>
+</div>
 
 <div class="card">
 <h2>1. Gestion des classes</h2>
@@ -99,6 +110,10 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <option value="presentiel">🏫 Présentiel</option>
 <option value="distanciel">💻 Distanciel</option></select></div>
 <div><label for="course-tz">Fuseau horaire des heures saisies</label><select id="course-tz" required></select><div class="tzhint" id="tz-hint"></div></div>
+<div><label for="course-week">Semaine</label><select id="course-week" required>
+<option value="toutes">Toutes les semaines</option>
+<option value="A">Semaine A uniquement</option>
+<option value="B">Semaine B uniquement</option></select></div>
 </div>
 <div class="actions"><button class="primary" type="submit" id="course-submit">Ajouter le cours</button><button class="secondary hidden" id="cancel-course-edit" type="button">Annuler</button></div>
 <div id="course-message" aria-live="polite"></div>
@@ -113,7 +128,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -153,6 +168,16 @@ function tzShort(tz) {
 }
 /*TZ-START*/
 const viewerTz = browserTz;
+// Numéro de semaine (du lundi au dimanche) d'une date, comparable d'une date à l'autre.
+const weekNum = (y, m, d) => Math.floor((Math.floor(Date.UTC(y, m - 1, d) / 86400000) + 3) / 7);
+// Type de semaine ("A" ou "B") à une date, d'après une date de référence située dans une semaine A.
+function weekTypeOf(ref, date = new Date()) {
+  if (!ref) return null;
+  const [ry, rm, rd] = ref.split("-").map(Number);
+  const n = wall(date, viewerTz);
+  const diff = weekNum(n.year, n.month, n.day) - weekNum(ry, rm, rd);
+  return (((diff % 2) + 2) % 2 === 0) ? "A" : "B";
+}
 // Composantes locales (année, mois, jour, heure…) d'un instant dans un fuseau donné.
 function wall(date, tz) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -177,7 +202,7 @@ function zonedToInstant(y, m, d, h, mi, tz) {
 }
 // Convertit un cours (jour + heures dans SON fuseau) vers le fuseau de l'appareil qui consulte.
 function toViewer(c) {
-  const base = {...c, jourAff: c.jour, debutAff: c.heureDebut, finAff: c.heureFin, modifie: false};
+  const base = {...c, jourAff: c.jour, debutAff: c.heureDebut, finAff: c.heureFin, semaineAff: c.semaine || "toutes", modifie: false};
   const di = days.indexOf(c.jour);
   if (!c.fuseau || di < 0 || !c.heureDebut || !c.heureFin) return base;
   try {
@@ -191,6 +216,8 @@ function toViewer(c) {
     const idx = (new Date(Date.UTC(s.year, s.month - 1, s.day)).getUTCDay() + 6) % 7;
     const p = n => String(n).padStart(2, "0");
     const out = {...base, jourAff: days[idx], debutAff: `${p(s.hour)}:${p(s.minute)}`, finAff: `${p(e.hour)}:${p(e.minute)}`};
+    // Si le décalage horaire fait passer le cours dans la semaine voisine, A et B s'inversent pour ce visiteur.
+    if (base.semaineAff !== "toutes" && (weekNum(s.year, s.month, s.day) - weekNum(y, m, d)) % 2 !== 0) out.semaineAff = base.semaineAff === "A" ? "B" : "A";
     out.modifie = out.jourAff !== c.jour || out.debutAff !== c.heureDebut || out.finAff !== c.heureFin;
     return out;
   } catch { return base; }
@@ -198,6 +225,44 @@ function toViewer(c) {
 /*TZ-END*/
 const originLine = c => c.modifie ? `<div class="tzhint">Heure d'origine : ${safeText(c.jour)} ${safeText(c.heureDebut)} – ${safeText(c.heureFin)} (${safeText(tzShort(c.fuseau))})</div>` : "";
 $("viewer-tz-note").textContent = `🕒 Dans cette vue, les heures sont affichées selon le fuseau de votre appareil : ${viewerTz.replace(/_/g, " ")} (${tzShort(viewerTz)}).`;
+
+/* ---------- Semaines A / B ---------- */
+let refA = null;
+let shownType = null;
+const currentWeekType = () => weekTypeOf(refA);
+const weeksOverlap = (a = "toutes", b = "toutes") => a === "toutes" || b === "toutes" || a === b;
+const weekBadge = w => (w === "A" || w === "B") ? `<span class="badge week">Semaine ${w}</span>` : "";
+// Lundi de la semaine contenant la date de référence (format AAAA-MM-JJ).
+function mondayOf(ref) {
+  const [y, m, d] = ref.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t;
+}
+function updateWeekUI() {
+  const cur = currentWeekType();
+  $("week-status").textContent = cur
+    ? `La semaine A commence le ${mondayOf(refA).toLocaleDateString("fr-FR", {timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric"})}. Cette semaine est la semaine ${cur}.`
+    : "Les semaines A/B ne sont pas encore configurées.";
+}
+onSnapshot(doc(db, "config", "semaines"), snap => {
+  refA = snap.exists() ? (snap.data().refA || null) : null;
+  $("ref-a").value = refA || "";
+  updateWeekUI();
+  renderPublicSchedule();
+}, err => console.error(err));
+$("week-form").addEventListener("submit", async e => {
+  e.preventDefault(); if (!currentUser) return;
+  const value = $("ref-a").value;
+  if (!value) { message($("week-message"), "Choisissez une date.", true); return; }
+  try {
+    await setDoc(doc(db, "config", "semaines"), {refA: value, updatedAt: new Date().toISOString()});
+    message($("week-message"), "Semaine A enregistrée.");
+  } catch (err) { message($("week-message"), "Enregistrement impossible. Vérifiez les règles Firestore.", true); console.error(err); }
+});
+updateWeekUI();
+// La semaine peut changer pendant que la page reste ouverte (dimanche → lundi).
+setInterval(() => { if (currentWeekType() !== shownType) { updateWeekUI(); renderPublicSchedule(); } }, 60000);
 const toMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
 // Position du cours dans la semaine, ramenée en UTC (pour comparer des cours saisis dans des fuseaux différents).
 function weekSpan(c) {
@@ -330,15 +395,16 @@ $("course-form").addEventListener("submit",async e=>{
     classeId:$("course-class").value, jour:$("course-day").value,
     heureDebut:$("start-time").value, heureFin:$("end-time").value,
     matiere:$("subject").value.trim(), professeur:$("teacher").value.trim(),
-    mode:$("course-mode").value, fuseau:$("course-tz").value
+    mode:$("course-mode").value, fuseau:$("course-tz").value,
+    semaine:$("course-week").value||"toutes"
   };
   if(!data.classeId){message($("course-message"),"Choisissez une classe.",true);return;}
   if(!MODES[data.mode]){message($("course-message"),"Choisissez le mode du cours (présentiel ou distanciel).",true);return;}
   if(!data.fuseau){message($("course-message"),"Choisissez un fuseau horaire.",true);return;}
   if(data.heureDebut>=data.heureFin){message($("course-message"),"L'heure de fin doit être après l'heure de début.",true);return;}
   const span=weekSpan(data);
-  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && overlap(weekSpan(c),span));
-  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe (${conflict.jour} ${timeLabel(conflict)}).`,true);return;}
+  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && weeksOverlap(c.semaine,data.semaine) && overlap(weekSpan(c),span));
+  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe (${conflict.jour} ${timeLabel(conflict)}${conflict.semaine&&conflict.semaine!=="toutes"?` · semaine ${conflict.semaine}`:""}).`,true);return;}
   try{
     if(id) await updateDoc(doc(db,"cours",id),data);
     else await addDoc(collection(db,"cours"),{...data,createdAt:new Date().toISOString()});
@@ -355,8 +421,8 @@ function className(id){return classes.find(c=>c.id===id)?.nom || "Classe supprim
 function renderAdminCourses(){
   if(!courses.length){$("admin-course-list").innerHTML='<p class="muted">Aucun cours enregistré.</p>';return;}
   const sorted=[...courses].sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
-  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)}<br><span class="muted">${safeText(c.jour)} · ${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
-}
+  $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)} ${weekBadge(c.semaine)}<br><span class="muted">${safeText(c.jour)} · ${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
+  }
 $("admin-course-list").addEventListener("click",async e=>{
   const edit=e.target.closest("[data-edit-course]")?.dataset.editCourse;
   const del=e.target.closest("[data-delete-course]")?.dataset.deleteCourse;
@@ -366,6 +432,7 @@ $("admin-course-list").addEventListener("click",async e=>{
     $("start-time").value=c.heureDebut;$("end-time").value=c.heureFin;
     $("subject").value=c.matiere;$("teacher").value=c.professeur;
     $("course-mode").value=c.mode||"";
+    $("course-week").value=c.semaine||"toutes";
     $("course-tz").value=c.fuseau||browserTz;
     updateTzHint();
     $("course-submit").textContent="Enregistrer les modifications";$("cancel-course-edit").classList.remove("hidden");
@@ -380,16 +447,17 @@ $("admin-course-list").addEventListener("click",async e=>{
 $("filter-class").addEventListener("change",renderPublicSchedule);
 $("filter-day").addEventListener("change",renderPublicSchedule);
 $("filter-teacher").addEventListener("input",renderPublicSchedule);
-function renderPublicSchedule(){
+  function renderPublicSchedule(){
   if(!classes.length && !courses.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours à afficher pour le moment.</p>';return;}
   const classFilter=$("filter-class").value, dayFilter=$("filter-day").value;
   const teacherFilter=$("filter-teacher").value.trim().toLocaleLowerCase("fr");
-  const filtered=courses.map(toViewer).filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jourAff===dayFilter)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
+  const week=currentWeekType(); shownType=week;
+  const filtered=courses.map(toViewer).filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jourAff===dayFilter)&&(!week||c.semaineAff==="toutes"||c.semaineAff===week)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
   filtered.sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
   if(!filtered.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours ne correspond à votre recherche.</p>';return;}
   $("public-schedule").innerHTML=days.map(day=>{
     const list=filtered.filter(c=>c.jourAff===day);if(!list.length)return "";
-    return `<h3 class="day-title">${day}</h3>`+list.map(c=>`<div class="course"><div class="row"><strong>${safeText(c.matiere)}</strong><span class="badge">${safeText(c.debutAff)} – ${safeText(c.finAff)}</span></div><div>${safeText(className(c.classeId))} ${modeBadge(c)}</div><div class="muted">Professeur : ${safeText(c.professeur)}</div>${originLine(c)}</div>`).join("");
+    return `<h3 class="day-title">${day}</h3>`+list.map(c=>`<div class="course"><div class="row"><strong>${safeText(c.matiere)}</strong><span class="badge">${safeText(c.debutAff)} – ${safeText(c.finAff)}</span></div><div>${safeText(className(c.classeId))} ${modeBadge(c)} ${weekBadge(c.semaineAff)}</div><div class="muted">Professeur : ${safeText(c.professeur)}</div>${originLine(c)}</div>`).join("");
   }).join("");
 }
 </script>
