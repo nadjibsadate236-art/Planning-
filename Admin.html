@@ -29,6 +29,14 @@ form button{margin-top:14px}.secondary{background:#e8efec;color:#174d3f}.danger{
 .badge.remote{background:#e6eefb;color:#1e4e8c}
 .badge.week{background:#fdf1dc;color:#8a5a00}
 .tzhint{font-size:.8rem;color:var(--muted);margin-top:5px}
+.day-picker{display:flex;flex-wrap:wrap;gap:7px}
+.day-chip{position:relative;margin:0;font-weight:700}
+.day-chip input{position:absolute;opacity:0;width:0;height:0}
+.day-chip span{display:inline-block;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:.9rem;user-select:none}
+.day-chip input:checked+span{background:var(--primary);border-color:var(--primary);color:#fff}
+.day-chip input:focus-visible+span{outline:3px solid #9bd3c2;outline-offset:1px}
+.day-shortcuts{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+.day-shortcuts button{margin:0}
 .day-title{margin-top:20px;color:var(--primary-dark);border-bottom:1px solid var(--border);padding-bottom:7px}
 footer{text-align:center;color:var(--muted);padding:25px}
 #status{font-size:.9rem}
@@ -99,8 +107,13 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <input type="hidden" id="course-id">
 <div class="grid">
 <div><label for="course-class">Classe</label><select id="course-class" required><option value="">Choisir une classe</option></select></div>
-<div><label for="course-day">Jour</label><select id="course-day" required><option value="">Choisir un jour</option>
-<option>Lundi</option><option>Mardi</option><option>Mercredi</option><option>Jeudi</option><option>Vendredi</option><option>Samedi</option><option>Dimanche</option></select></div>
+<div style="grid-column:1/-1"><label id="day-label">Jour(s) du cours</label>
+<div class="day-picker" id="course-days" role="group" aria-labelledby="day-label"></div>
+<div class="day-shortcuts">
+<button class="secondary small" type="button" data-days="all">Tous les jours</button>
+<button class="secondary small" type="button" data-days="weekdays">Lundi – Vendredi</button>
+<button class="secondary small" type="button" data-days="none">Tout décocher</button></div>
+<div class="tzhint">Cochez plusieurs jours pour créer le même cours sur chacun d'eux en une seule fois.</div></div>
 <div><label for="start-time">Heure de début</label><input id="start-time" type="time" required></div>
 <div><label for="end-time">Heure de fin</label><input id="end-time" type="time" required></div>
 <div><label for="subject">Matière</label><input id="subject" placeholder="Ex. Coran, arabe" required maxlength="100"></div>
@@ -128,7 +141,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, query, where, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -331,7 +344,7 @@ function refreshClassSelects() {
   $("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
   $("filter-class").value = classes.some(c=>c.id===selected) ? selected : "";
 }
-onSnapshot(collection(db,"classes"), snap => {
+  onSnapshot(collection(db,"classes"), snap => {
   classes = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
   refreshClassSelects();
   renderClasses();
@@ -388,31 +401,56 @@ function resetClassForm(){
 $("cancel-class-edit").addEventListener("click",resetClassForm);
 
 /* ---------- Cours ---------- */
+// Sélecteur de jours (cases à cocher)
+$("course-days").innerHTML = days.map(d=>`<label class="day-chip"><input type="checkbox" value="${d}"><span>${d}</span></label>`).join("");
+const dayBoxes = () => [...$("course-days").querySelectorAll("input")];
+const selectedDays = () => dayBoxes().filter(b=>b.checked).map(b=>b.value);
+function setDays(list){ dayBoxes().forEach(b=>{ b.checked = list.includes(b.value); }); }
+document.querySelector(".day-shortcuts").addEventListener("click", e=>{
+  const kind = e.target.closest("[data-days]")?.dataset.days; if(!kind) return;
+  setDays(kind==="all" ? days : kind==="weekdays" ? days.slice(0,5) : []);
+});
 $("course-form").addEventListener("submit",async e=>{
   e.preventDefault(); if(!currentUser)return;
   const id=$("course-id").value;
+  const chosen=selectedDays();
   const data={
-    classeId:$("course-class").value, jour:$("course-day").value,
+    classeId:$("course-class").value, jour:chosen[0]||"",
     heureDebut:$("start-time").value, heureFin:$("end-time").value,
     matiere:$("subject").value.trim(), professeur:$("teacher").value.trim(),
     mode:$("course-mode").value, fuseau:$("course-tz").value,
     semaine:$("course-week").value||"toutes"
   };
   if(!data.classeId){message($("course-message"),"Choisissez une classe.",true);return;}
+  if(!chosen.length){message($("course-message"),"Cochez au moins un jour.",true);return;}
   if(!MODES[data.mode]){message($("course-message"),"Choisissez le mode du cours (présentiel ou distanciel).",true);return;}
   if(!data.fuseau){message($("course-message"),"Choisissez un fuseau horaire.",true);return;}
   if(data.heureDebut>=data.heureFin){message($("course-message"),"L'heure de fin doit être après l'heure de début.",true);return;}
-  const span=weekSpan(data);
-  const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && weeksOverlap(c.semaine,data.semaine) && overlap(weekSpan(c),span));
-  if(conflict){message($("course-message"),`Conflit : un cours est déjà prévu dans cette classe (${conflict.jour} ${timeLabel(conflict)}${conflict.semaine&&conflict.semaine!=="toutes"?` · semaine ${conflict.semaine}`:""}).`,true);return;}
+  // En modification, le cours édité garde son jour d'origine s'il est toujours coché ; les autres jours cochés deviennent des copies.
+  const editedDay=id?(chosen.includes(courses.find(c=>c.id===id)?.jour)?courses.find(c=>c.id===id).jour:chosen[0]):null;
+  // Contrôle des conflits pour chaque jour demandé : aucune écriture n'a lieu si l'un d'eux pose problème.
+  const conflicts=[];
+  for(const jour of chosen){
+    const span=weekSpan({...data,jour});
+    const conflict=courses.find(c=>c.id!==id && c.classeId===data.classeId && weeksOverlap(c.semaine,data.semaine) && overlap(weekSpan(c),span));
+    if(conflict)conflicts.push(`${jour} (déjà : ${conflict.jour} ${timeLabel(conflict)}${conflict.semaine&&conflict.semaine!=="toutes"?` · semaine ${conflict.semaine}`:""})`);
+  }
+  if(conflicts.length){message($("course-message"),`Conflit dans cette classe, rien n'a été enregistré : ${conflicts.join(" ; ")}.`,true);return;}
   try{
-    if(id) await updateDoc(doc(db,"cours",id),data);
-    else await addDoc(collection(db,"cours"),{...data,createdAt:new Date().toISOString()});
-    resetCourseForm(); message($("course-message"),"Cours enregistré avec succès.");
+    const batch=writeBatch(db);
+    const now=new Date().toISOString();
+    for(const jour of chosen){
+      if(id && jour===editedDay) batch.update(doc(db,"cours",id),{...data,jour});
+      else batch.set(doc(collection(db,"cours")),{...data,jour,createdAt:now});
+    }
+    await batch.commit();
+    resetCourseForm();
+    message($("course-message"),chosen.length>1?`${chosen.length} cours enregistrés (${chosen.join(", ")}).`:"Cours enregistré avec succès.");
   }catch(err){message($("course-message"),"Enregistrement impossible. Vérifiez les règles Firestore.",true);console.error(err);}
 });
 function resetCourseForm(){
   $("course-form").reset();$("course-id").value="";$("course-submit").textContent="Ajouter le cours";$("cancel-course-edit").classList.add("hidden");
+  setDays([]);
   updateTzHint();
 }
 $("cancel-course-edit").addEventListener("click",resetCourseForm);
@@ -422,13 +460,13 @@ function renderAdminCourses(){
   if(!courses.length){$("admin-course-list").innerHTML='<p class="muted">Aucun cours enregistré.</p>';return;}
   const sorted=[...courses].sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
   $("admin-course-list").innerHTML=sorted.map(c=>`<div class="item"><div class="row"><div><strong>${safeText(c.matiere)}</strong> — ${safeText(className(c.classeId))} ${modeBadge(c)} ${weekBadge(c.semaine)}<br><span class="muted">${safeText(c.jour)} · ${safeText(timeLabel(c))} · ${safeText(c.professeur)}</span></div><div class="actions"><button class="secondary small" data-edit-course="${safeText(c.id)}">Modifier</button><button class="danger small" data-delete-course="${safeText(c.id)}">Supprimer</button></div></div></div>`).join("");
-  }
+}
 $("admin-course-list").addEventListener("click",async e=>{
   const edit=e.target.closest("[data-edit-course]")?.dataset.editCourse;
   const del=e.target.closest("[data-delete-course]")?.dataset.deleteCourse;
   if(edit){
     const c=courses.find(x=>x.id===edit);if(!c)return;
-    $("course-id").value=c.id;$("course-class").value=c.classeId;$("course-day").value=c.jour;
+    $("course-id").value=c.id;$("course-class").value=c.classeId;setDays([c.jour]);
     $("start-time").value=c.heureDebut;$("end-time").value=c.heureFin;
     $("subject").value=c.matiere;$("teacher").value=c.professeur;
     $("course-mode").value=c.mode||"";
@@ -447,7 +485,7 @@ $("admin-course-list").addEventListener("click",async e=>{
 $("filter-class").addEventListener("change",renderPublicSchedule);
 $("filter-day").addEventListener("change",renderPublicSchedule);
 $("filter-teacher").addEventListener("input",renderPublicSchedule);
-  function renderPublicSchedule(){
+function renderPublicSchedule(){
   if(!classes.length && !courses.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours à afficher pour le moment.</p>';return;}
   const classFilter=$("filter-class").value, dayFilter=$("filter-day").value;
   const teacherFilter=$("filter-teacher").value.trim().toLocaleLowerCase("fr");
@@ -463,3 +501,5 @@ $("filter-teacher").addEventListener("input",renderPublicSchedule);
 </script>
 </body>
 </html>
+
+onSnapshot(collection(db,"classes"), snap
