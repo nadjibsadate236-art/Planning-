@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Emploi du Temps — Madrassah</title>
+<title>Emploi du Temps — Madrassa</title>
 <style>
 :root{--green:#10513f;--green2:#176b55;--pale:#f3f6f5;--text:#263238;--muted:#64748b;--border:#e2e8f0}
 *{box-sizing:border-box}
@@ -24,12 +24,14 @@ select{padding:12px 14px;font-size:16px;border-radius:8px;border:2px solid var(-
 .course-teacher{color:var(--muted);font-size:12px}
 .course-mode{display:inline-block;margin-top:8px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:bold;background:#e3f2eb;color:#15543e}
 .course-mode.remote{background:#e6eefb;color:#1e4e8c}
+.course-mode.week{background:#fdf1dc;color:#8a5a00;margin-left:6px}
+.course-mode:first-child.week{margin-left:0}
 .empty{border-left-color:#d7e2dc;text-align:center;color:#94a3a0;font-style:italic;background:#fafcfb}
 .message{text-align:center;color:var(--muted);padding:13px 8px;font-size:.92rem}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.day-header{margin-top:8px}.panel{padding:14px}.page-header{padding:18px}}
 </style></head><body>
 <header class="page-header">
-  <h1>📚 Emploi du temps de la Madrassah</h1>
+  <h1>📚 Emploi du temps de la Madrassa</h1>
   <p>Sélectionnez votre classe pour consulter les cours de la semaine.</p>
 </header>
 <section class="panel">
@@ -40,7 +42,7 @@ select{padding:12px 14px;font-size:16px;border-radius:8px;border:2px solid var(-
 <div id="schedule-container" class="schedule-container panel"><div class="grid" id="schedule-grid"></div></div>
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import {getFirestore,collection,onSnapshot,query,where} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import {getFirestore,collection,onSnapshot,query,where,doc} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 const firebaseConfig = {
   apiKey: "AIzaSyBiiF6i7vweIIyyjKH0p-CP20iHaDKspkY",
   authDomain: "madrassa-web.firebaseapp.com",
@@ -81,9 +83,19 @@ function zonedToInstant(y,m,d,h,mi,tz){
  if(off2!==off)t=guess-off2*60000;
  return t;
 }
+// Numéro de semaine (du lundi au dimanche) d'une date, comparable d'une date à l'autre.
+const weekNum=(y,m,d)=>Math.floor((Math.floor(Date.UTC(y,m-1,d)/86400000)+3)/7);
+// Type de semaine ("A" ou "B") à une date, d'après une date de référence située dans une semaine A.
+function weekTypeOf(ref,date=new Date()){
+ if(!ref)return null;
+ const [ry,rm,rd]=ref.split("-").map(Number);
+ const n=wall(date,viewerTz);
+ const diff=weekNum(n.year,n.month,n.day)-weekNum(ry,rm,rd);
+ return (((diff%2)+2)%2===0)?"A":"B";
+}
 // Convertit un cours (jour + heures dans SON fuseau) vers le fuseau de l'appareil qui consulte.
 function toViewer(c){
- const base={...c,jourAff:c.jour,debutAff:c.heureDebut,finAff:c.heureFin,modifie:false};
+ const base={...c,jourAff:c.jour,debutAff:c.heureDebut,finAff:c.heureFin,semaineAff:c.semaine||"toutes",modifie:false};
  const di=days.indexOf(c.jour);
  if(!c.fuseau||di<0||!c.heureDebut||!c.heureFin)return base;
  try{
@@ -97,6 +109,8 @@ function toViewer(c){
   const idx=(new Date(Date.UTC(s.year,s.month-1,s.day)).getUTCDay()+6)%7;
   const p=n=>String(n).padStart(2,"0");
   const out={...base,jourAff:days[idx],debutAff:`${p(s.hour)}:${p(s.minute)}`,finAff:`${p(e.hour)}:${p(e.minute)}`};
+  // Si le décalage horaire fait passer le cours dans la semaine voisine, A et B s'inversent pour ce visiteur.
+  if(base.semaineAff!=="toutes"&&(weekNum(s.year,s.month,s.day)-weekNum(y,m,d))%2!==0)out.semaineAff=base.semaineAff==="A"?"B":"A";
   out.modifie=out.jourAff!==c.jour||out.debutAff!==c.heureDebut||out.finAff!==c.heureFin;
   return out;
  }catch{return base}
@@ -104,27 +118,49 @@ function toViewer(c){
 /*TZ-END*/
 const originLine=c=>c.modifie?`<div class="course-origin">Heure d'origine : ${esc(c.jour)} ${esc(c.heureDebut)} – ${esc(c.heureFin)} (${esc(tzShort(c.fuseau))})</div>`:"";
 $("tz-info").textContent=`🕒 Les heures sont affichées selon le fuseau de votre appareil : ${viewerTz.replace(/_/g," ")} (${tzShort(viewerTz)}).`;
-let stopCourses=null,classes=[];
+
+let refA=null,lastRaw=[],loaded=false,shownType=null,stopCourses=null,classes=[];
+const currentWeekType=()=>weekTypeOf(refA);
+
+// Début de la semaine A, réglé dans l'administration.
+onSnapshot(doc(db,"config","semaines"),snap=>{
+ refA=snap.exists()?(snap.data().refA||null):null;
+ renderCurrent();
+},err=>{console.error(err);refA=null;renderCurrent()});
+// La semaine peut changer pendant que la page reste ouverte (dimanche → lundi).
+setInterval(()=>{if(currentWeekType()!==shownType)renderCurrent()},60000);
+
 onSnapshot(collection(db,"classes"),snap=>{
  classes=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nom||"").localeCompare(b.nom||"","fr"));
  const previous=select.value;
  select.innerHTML='<option value="">-- Sélectionnez votre classe --</option>'+classes.map(c=>`<option value="${esc(c.id)}">${esc(c.nom)}</option>`).join("");
  if(classes.some(c=>c.id===previous))select.value=previous;
- else {select.value="";if(stopCourses){stopCourses();stopCourses=null}container.style.display="none";msg.textContent=classes.length?"Choisissez votre classe pour afficher son emploi du temps.":"Aucune classe n'est encore disponible."}
+ else {select.value="";loaded=false;lastRaw=[];if(stopCourses){stopCourses();stopCourses=null}container.style.display="none";msg.textContent=classes.length?"Choisissez votre classe pour afficher son emploi du temps.":"Aucune classe n'est encore disponible."}
 },err=>{msg.textContent="Impossible de charger les classes. Vérifiez les règles Firestore.";console.error(err)});
 select.addEventListener("change",()=>{
  if(stopCourses){stopCourses();stopCourses=null}
+ loaded=false;lastRaw=[];
  const id=select.value;grid.innerHTML="";
  if(!id){container.style.display="none";msg.textContent="Choisissez votre classe pour afficher son emploi du temps.";return}
  msg.textContent="Chargement des cours…";container.style.display="block";
  stopCourses=onSnapshot(query(collection(db,"cours"),where("classeId","==",id)),snap=>{
-  const courses=snap.docs.map(d=>d.data()).sort((a,b)=>days.indexOf(a.jour)-days.indexOf(b.jour)||(a.heureDebut||"").localeCompare(b.heureDebut||""));
-  render(courses);msg.textContent=courses.length?"Emploi du temps mis à jour automatiquement.":"Aucun cours enregistré pour cette classe.";
+  lastRaw=snap.docs.map(d=>d.data());loaded=true;renderCurrent();
  },err=>{msg.textContent="Impossible de charger les cours.";console.error(err)});
 });
-function render(rawCourses){
+function renderCurrent(){
+ if(!select.value||!loaded)return;
+ const week=currentWeekType();shownType=week;
+ const shown=render(lastRaw,week);
+ if(!lastRaw.length)msg.textContent="Aucun cours enregistré pour cette classe.";
+ else if(!week)msg.textContent="Les semaines A/B ne sont pas encore configurées : tous les cours sont affichés.";
+ else msg.textContent=shown?`Semaine ${week} (semaine en cours) — mis à jour automatiquement.`:`Aucun cours cette semaine (semaine ${week}) pour cette classe.`;
+}
+const weekBadge=w=>(w==="A"||w==="B")?`<div class="course-mode week">Semaine ${w}</div>`:"";
+function render(rawCourses,week){
  grid.innerHTML="";
- const courses=rawCourses.map(toViewer).sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
+ const courses=rawCourses.map(toViewer)
+  .filter(c=>!week||c.semaineAff==="toutes"||c.semaineAff===week)
+  .sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
  days.forEach(day=>{
   const col=document.createElement("section");col.className="day-column";
   const heading=document.createElement("div");heading.className="day-header";heading.textContent=day;col.appendChild(heading);
@@ -134,10 +170,11 @@ function render(rawCourses){
    const remote=c.mode==="distanciel";
    const card=document.createElement("article");card.className="course-card"+(remote?" remote":"");
    const mode=MODES[c.mode]?`<div class="course-mode${remote?" remote":""}">${MODES[c.mode]}</div>`:"";
-   card.innerHTML=`<div class="course-time">${esc(c.debutAff)} – ${esc(c.finAff)}</div><div class="course-subject">${esc(c.matiere)}</div><div class="course-teacher">🧑‍🏫 ${esc(c.professeur)}</div>${mode}${originLine(c)}`;
+   card.innerHTML=`<div class="course-time">${esc(c.debutAff)} – ${esc(c.finAff)}</div><div class="course-subject">${esc(c.matiere)}</div><div class="course-teacher">🧑‍🏫 ${esc(c.professeur)}</div>${mode}${weekBadge(c.semaineAff)}${originLine(c)}`;
    col.appendChild(card);
   });
   grid.appendChild(col);
  });
+ return courses.length;
 }
 </script></body></html>
