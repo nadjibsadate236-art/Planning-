@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Madrassah — Gestion des emplois du temps</title>
+<title>Madrassa — Gestion des emplois du temps</title>
 <style>
 :root{--primary:#176b55;--primary-dark:#10513f;--bg:#f3f6f5;--card:#fff;--text:#1f2937;--muted:#64748b;--danger:#c0392b;--border:#e2e8f0}
 *{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
@@ -47,7 +47,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 </head>
 <body>
 <header><div class="wrap">
-<h1>📚 Madrassah — Emploi du temps</h1>
+<h1>📚 Madrassa — Emploi du temps</h1>
 <p>Consultez les cours ou gérez l'organisation de la Madrassa.</p>
 </div></header>
 <nav><div class="wrap">
@@ -71,7 +71,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 <section id="admin-view" class="hidden">
 <div id="login-card" class="card">
 <h2>Connexion administrateur</h2>
-<p class="muted">​Connectez-vous à l'aide de votre compte Firebase Authentication. </p>
+<p class="muted">Connectez-vous avec un compte créé dans Firebase Authentication.</p>
 <form id="login-form">
 <label for="email">Adresse e-mail</label><input id="email" type="email" autocomplete="username" required>
 <label for="password">Mot de passe</label><input id="password" type="password" autocomplete="current-password" required>
@@ -139,7 +139,7 @@ footer{text-align:center;color:var(--muted);padding:25px}
 </div>
 </section>
 </main>
-<footer>Plateforme de gestion de la Madrassah</footer>
+<footer>Plateforme de gestion de la Madrassa</footer>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -239,7 +239,7 @@ function toViewer(c) {
 }
 /*TZ-END*/
 const originLine = c => c.modifie ? `<div class="tzhint">Heure d'origine : ${safeText(c.jour)} ${safeText(c.heureDebut)} – ${safeText(c.heureFin)} (${safeText(tzShort(c.fuseau))})</div>` : "";
-$("viewer-tz-note").textContent = `🕒 Dans cette vue, les heures sont affichées selon le fuseau de votre appareil : ${viewerTz.replace(/_/g, " ")} (${tzShort(viewerTz)}).`;
+$("viewer-tz-note").textContent = `🕒 Tous les cours sont affichés, semaines A et B comprises. Les heures sont converties selon le fuseau de votre appareil : ${viewerTz.replace(/_/g, " ")} (${tzShort(viewerTz)}).`;
 
 /* ---------- Semaines A / B ---------- */
 let refA = null;
@@ -256,6 +256,7 @@ function mondayOf(ref) {
 }
 function updateWeekUI() {
   const cur = currentWeekType();
+  shownType = cur;
   $("week-status").textContent = cur
     ? `La semaine A commence le ${mondayOf(refA).toLocaleDateString("fr-FR", {timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric"})}. Cette semaine est la semaine ${cur}.`
     : "Les semaines A/B ne sont pas encore configurées.";
@@ -277,7 +278,7 @@ $("week-form").addEventListener("submit", async e => {
 });
 updateWeekUI();
 // La semaine peut changer pendant que la page reste ouverte (dimanche → lundi).
-setInterval(() => { if (currentWeekType() !== shownType) { updateWeekUI(); renderPublicSchedule(); } }, 60000);
+setInterval(() => { if (currentWeekType() !== shownType) updateWeekUI(); }, 60000);
 const toMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
 // Position du cours dans la semaine, ramenée en UTC (pour comparer des cours saisis dans des fuseaux différents).
 function weekSpan(c) {
@@ -343,7 +344,7 @@ function refreshClassSelects() {
   const options = classes.map(c=>`<option value="${safeText(c.id)}">${safeText(c.nom)}</option>`).join("");
   $("course-class").innerHTML = '<option value="">Choisir une classe</option>'+options;
   const selected = $("filter-class").value;
-$("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
+  $("filter-class").innerHTML = '<option value="">Toutes les classes</option>'+options;
   $("filter-class").value = classes.some(c=>c.id===selected) ? selected : "";
 }
 onSnapshot(collection(db,"classes"), snap => {
@@ -517,8 +518,8 @@ function renderPublicSchedule(){
   if(!classes.length && !courses.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours à afficher pour le moment.</p>';return;}
   const classFilter=$("filter-class").value, dayFilter=$("filter-day").value;
   const teacherFilter=$("filter-teacher").value.trim().toLocaleLowerCase("fr");
-  const week=currentWeekType(); shownType=week;
-  const filtered=courses.map(toViewer).filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jourAff===dayFilter)&&(!week||c.semaineAff==="toutes"||c.semaineAff===week)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
+  // Vue d'administration : tous les cours sont affichés, semaines A et B comprises (badge sur chaque cours).
+  const filtered=courses.map(toViewer).filter(c=>(!classFilter||c.classeId===classFilter)&&(!dayFilter||c.jourAff===dayFilter)&&(!teacherFilter||(c.professeur||"").toLocaleLowerCase("fr").includes(teacherFilter)));
   filtered.sort((a,b)=>days.indexOf(a.jourAff)-days.indexOf(b.jourAff)||(a.debutAff||"").localeCompare(b.debutAff||""));
   if(!filtered.length){$("public-schedule").innerHTML='<p class="muted">Aucun cours ne correspond à votre recherche.</p>';return;}
   $("public-schedule").innerHTML=days.map(day=>{
