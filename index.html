@@ -84,7 +84,7 @@ function zonedToInstant(y,m,d,h,mi,tz){
  return t;
 }
 // Numéro de semaine (du lundi au dimanche) d'une date, comparable d'une date à l'autre.
-const weekNum=(y,m,d)=>Math.floor((Math.floor(Date.UTC(y,m-1,d)/86400000)+3)/7);
+const weekNum=(y,m,d)=>Math.floor((Math.floor(Date.UTC(y,m-1,d)/86400000)+5)/7);
 // Type de semaine ("A" ou "B") à une date, d'après une date de référence située dans une semaine A.
 function weekTypeOf(ref,date=new Date()){
  if(!ref)return null;
